@@ -146,7 +146,7 @@
 
     let countdownSec = 180;
     let countdownInterval = null;
-    let rawOddsData = []; // Čuvamo originalne podatke iz TheOdds API-ja radi pametnog poređenja
+    let rawOddsData = []; 
     let premečKvoteUčitane = false;
     let odsviraniAlarmi = new Set();
     let serviceWorkerReg = null;
@@ -237,16 +237,16 @@
         try {
             const res = await fetch(`https://api.the-odds-api.com/v4/sports/soccer/odds/?apiKey=${THEODDS_API_KEY}&regions=eu&markets=h2h`);
             const data = await res.json();
-            rawOddsData = data; // Sačuvaj cele objekte radi pametnog uparivanja
+            rawOddsData = Array.isArray(data) ? data : []; 
             premečKvoteUčitane = true;
-            return data;
+            return rawOddsData;
         } catch (e) {
             console.error("Greška pri učitavanju TheOdds API-ja:", e);
+            rawOddsData = [];
             return [];
         }
     }
 
-    // Pomoćna funkcija za čišćenje imena timova kako bi ih lakše uparili
     function ocistiImeTima(ime) {
         if (!ime) return "";
         return ime.toLowerCase()
@@ -255,21 +255,20 @@
                   .replace(/\bfk\b/g, '')
                   .replace(/\bclub\b/g, '')
                   .replace(/\byouth\b/g, '')
-                  .replace(/[\s\-_]/g, '') // uklanja razmake i crtice
+                  .replace(/[\s\-_]/g, '') 
                   .trim();
     }
 
-    // PAMETNA FUNKCIJA ZA PRONALAŽENJE PRE-MEČ KVOTE
     function pronadjiKvoteZaUtakmicu(homeLive, awayLive) {
+        if (!rawOddsData || rawOddsData.length === 0) return null;
+        
         const homeClean = ocistiImeTima(homeLive);
         const awayClean = ocistiImeTima(awayLive);
 
-        // Pokušaj pronalaženja meča gde se bar deo imena poklapa
         const pronadjeniMec = rawOddsData.find(match => {
             const matchHomeClean = ocistiImeTima(match.home_team);
             const matchAwayClean = ocistiImeTima(match.away_team);
 
-            // Provera da li se imena preklapaju (npr "Real Madrid" i "Real Madrid CF")
             const homeSePoklapa = matchHomeClean.includes(homeClean) || homeClean.includes(matchHomeClean);
             const awaySePoklapa = matchAwayClean.includes(awayClean) || awayClean.includes(matchAwayClean);
 
@@ -293,7 +292,7 @@
 
     async function runScanner() {
         document.getElementById('radarMatchesContainer').innerHTML = `
-            <div class="text-center py-10 text-emerald-400 font-bold">
+            <div class="text-center py-10 text-emerald-400 font-bold animate-pulse">
                 Učitavanje live prenosa i satelitskih kvota...
             </div>`;
 
@@ -329,7 +328,6 @@
             const league = match.league.name;
             const matchId = match.fixture.id;
             
-            // Ovde koristimo novu pametnu pretragu umesto starog ključa
             const oddsData = pronadjiKvoteZaUtakmicu(home, away);
             
             const initialHomeOdd = oddsData ? oddsData.homeOdd : null;
@@ -338,7 +336,6 @@
             let statusAlarma = "Pratimo situaciju...";
             let alarmAktivan = false;
 
-            // Logika: Detekcija bilo kog favorita na meču (kvota < 2.30)
             if (initialHomeOdd && initialAwayOdd) {
                 const d_favorit = initialHomeOdd < initialAwayOdd && initialHomeOdd < 2.30;
                 const g_favorit = initialAwayOdd < initialHomeOdd && initialAwayOdd < 2.30;
@@ -355,11 +352,9 @@
                     statusAlarma = `⏰ ALARM: Nerešeno ${homeScore}:${awayScore} u ${elapsed}. minutu! Favorit juri pobedu.`;
                     alarmAktivan = true;
                 } else {
-                    // Kada nema alarma, a postoji favorit < 2.30, ispisujemo početnu kvotu
                     statusAlarma = `Pratimo situaciju... Početna kvota na ${d_favorit ? 'domaćeg' : 'gostujućeg'} favorita: ${d_favorit ? initialHomeOdd : initialAwayOdd}`;
                 }
             } else {
-                // Kada nismo uspeli da nađemo kvotu uopšte, ili nema favorita ispod 2.30
                 statusAlarma = "Pratimo situaciju na terenu... (Nema favorita < 2.30)";
             }
 
@@ -393,22 +388,17 @@
         });
     }
 
-    // AUTOMATSKI PAMETNI PRESEK KVOTA (Čuvanje i upoređivanje)
     function proveriVremeIPresek() {
         const sada = new Date();
         const sati = sada.getHours();
 
         if (premečKvoteUčitane && rawOddsData.length > 0) {
-            
-            // Logika upisa za presek 13h
             if (sati >= 13 && sati < 17) {
                 if (!localStorage.getItem('presek_kvota_13')) {
                     localStorage.setItem('presek_kvota_13', JSON.stringify(rawOddsData));
                     console.log("Presek za 13:00 uspešno registrovan!");
                 }
             }
-            
-            // Logika upisa za presek 17h
             if (sati >= 17) {
                 if (!localStorage.getItem('presek_kvota_17')) {
                     localStorage.setItem('presek_kvota_17', JSON.stringify(rawOddsData));
@@ -417,7 +407,6 @@
                 }
             }
         }
-        
         azurirajStatusPresekaNaEkranu();
     }
 
@@ -443,7 +432,7 @@
 
         if (staraKolekcijaRaw && novaKolekcijaRaw) {
             const stareKvote = JSON.parse(staraKolekcijaRaw);
-            const noveKvote = JSON.parse(novaKolekcijaRaw);
+            const noveKvote = JSON.parse(novaKforceRaw || novaKolekcijaRaw);
             const dropContainer = document.getElementById('oddsDropContainer');
             dropContainer.innerHTML = '';
 
@@ -505,10 +494,6 @@
                 .then(reg => {
                     console.log('Service Worker uspešno registrovan!');
                     serviceWorkerReg = reg;
-                    
-                    if (Notification.permission === 'default') {
-                        document.getElementById('bellDot').classList.remove('hidden');
-                    }
                 })
                 .catch(err => console.error('Greška sa Service Worker-om:', err));
         });
